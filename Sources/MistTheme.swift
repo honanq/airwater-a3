@@ -82,12 +82,14 @@ struct MistBackground: View {
                 LinearGradient(colors: Mist.backdrop(candidate), startPoint: .top, endPoint: .bottom)
                     .opacity(candidate == mood ? 1 : 0)
             }
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
                 let t = clock.advance(timeline.date.timeIntervalSinceReferenceDate, speed: 0.6 + intensity * 1.4)
                 Canvas { context, size in
                     Self.drawGlow(in: &context, size: size, time: t, color: Mist.accent(mood))
                     Self.drawMist(in: &context, size: size, time: t, intensity: intensity)
                 }
+                // Rasterize on the GPU in one pass instead of compositing each shape.
+                .drawingGroup()
             }
             .id(mood)
             .transition(.opacity)
@@ -113,20 +115,22 @@ struct MistBackground: View {
     }
 
     private static func drawMist(in context: inout GraphicsContext, size: CGSize, time t: Double, intensity: Double) {
-        context.drawLayer { layer in
-            layer.addFilter(.blur(radius: 9))
-            for i in 0..<34 {
-                let seed = Double(i)
-                let a = Self.fract(sin(seed * 12.9898) * 43758.5453)
-                let b = Self.fract(sin(seed * 78.233) * 12345.678)
-                let progress = Self.fract(t * (0.018 + 0.03 * b) + a)
-                let x = size.width * a + sin(t * 0.7 + seed) * 16
-                let y = size.height * (1.08 - progress * 1.25)
-                let radius = 7 + 26 * b
-                let alpha = sin(progress * .pi) * (0.03 + 0.11 * intensity)
-                layer.fill(Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
-                           with: .color(.white.opacity(alpha)))
-            }
+        // Soft radial particles instead of a full-screen blur filter, which
+        // was re-run every frame and dropped frames while scrolling.
+        for i in 0..<34 {
+            let seed = Double(i)
+            let a = Self.fract(sin(seed * 12.9898) * 43758.5453)
+            let b = Self.fract(sin(seed * 78.233) * 12345.678)
+            let progress = Self.fract(t * (0.018 + 0.03 * b) + a)
+            let x = size.width * a + sin(t * 0.7 + seed) * 16
+            let y = size.height * (1.08 - progress * 1.25)
+            let radius = 7 + 26 * b
+            let alpha = sin(progress * .pi) * (0.05 + 0.16 * intensity)
+            let soft = radius * 1.8
+            let center = CGPoint(x: x, y: y)
+            context.fill(Path(ellipseIn: CGRect(x: x - soft, y: y - soft, width: soft * 2, height: soft * 2)),
+                         with: .radialGradient(Gradient(colors: [.white.opacity(alpha), .white.opacity(0)]),
+                                               center: center, startRadius: 0, endRadius: soft))
         }
     }
 
@@ -144,16 +148,20 @@ struct GlassCard: ViewModifier {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
+                // A live material re-blurs the animated backdrop on every
+                // frame of a scroll; a static translucent fill looks the same
+                // over a dark gradient at a fraction of the GPU cost.
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.045)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(tint.opacity(0.10)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .strokeBorder(LinearGradient(colors: [.white.opacity(0.26), .white.opacity(0.03)],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.28), radius: 20, y: 10)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.26), .white.opacity(0.03)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.28), radius: 24, y: 12)
     }
 }
 

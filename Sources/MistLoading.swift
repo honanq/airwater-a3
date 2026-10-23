@@ -35,7 +35,7 @@ struct ConnectOrb: View {
     @State private var orbitClock = PhaseClock()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 40, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             let ripple = rippleClock.advance(time, speed: working ? 0.55 : 0.25)
             let orbit = orbitClock.advance(time, speed: working ? 2.4 : 0)
@@ -95,7 +95,7 @@ struct RadarScan: View {
     @State private var clock = PhaseClock()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 40, paused: reduceMotion || !active)) { timeline in
+        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion || !active)) { timeline in
             let sweep = clock.advance(timeline.date.timeIntervalSinceReferenceDate, speed: 1.8)
             ZStack {
                 ForEach(1..<4, id: \.self) { ring in

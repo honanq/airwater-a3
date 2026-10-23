@@ -29,6 +29,13 @@ final class A3LocalSession: ObservableObject {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var identity: (id: Int, key: String)?
     private var pendingControl: [String: Int]?
+    /// Device values when the pending control was sent; lets a quantized
+    /// fan speed (device reports 45 for a requested 47) still count as applied.
+    private var pendingBaseline: [String: Int] = [:]
+    private var statusFollowUps: Task<Void, Never>?
+    /// Experimental target-humidity write formats, tried in order until the
+    /// device reports the new hThreshold. The first confirmed one is remembered.
+    private var humidityAttempt: (target: Int, formats: [Int], current: Int)?
     private var commandTimeout: Task<Void, Never>?
     private var dnsQueries = 0
     private var httpRequests = 0
@@ -308,6 +315,8 @@ final class A3LocalSession: ObservableObject {
         report = [:]
         reportSignatureVerified = false
         pendingControl = nil
+        pendingBaseline = [:]
+        humidityAttempt = nil
         isSendingControl = false
         settingsReport = [:]
         commandStatus = ""
@@ -439,7 +448,11 @@ final class A3LocalSession: ObservableObject {
         powerCheck = nil
         commandTimeout?.cancel()
         commandTimeout = nil
+        statusFollowUps?.cancel()
+        statusFollowUps = nil
         pendingControl = nil
+        pendingBaseline = [:]
+        humidityAttempt = nil
         isSendingControl = false
         dns.stop()
         http.stop()
@@ -649,6 +662,7 @@ final class A3LocalSession: ObservableObject {
                 (values[field] as? NSNumber).map { (field, $0.intValue) }
             })
             event("收到签名有效的设置报告，包含 \(settingsReport.count) 个已知设置字段")
+            resolvePendingControl()
             return
         }
         guard command == 1001 else {
@@ -656,7 +670,8 @@ final class A3LocalSession: ObservableObject {
             return
         }
         let fields = Array(Set(["power", "mode", "cadr", "waterflood", "lock", "anion", "h", "h0", "gooseOnline", "water",
-                               "WUD", "wetFilm", "isNeedClean", "powerHeatStatus", "electrolysisStatus", "delayOffTimer"] + Self.settingFields))
+                               "WUD", "wetFilm", "isNeedClean", "powerHeatStatus", "electrolysisStatus", "delayOffTimer",
+                               "t", "t0", "uv", "wifiSignal"] + Self.settingFields))
         report = Dictionary(uniqueKeysWithValues: fields.compactMap { key in
             (values[key] as? NSNumber).map { (key, $0.intValue) }
         })
@@ -678,18 +693,7 @@ final class A3LocalSession: ObservableObject {
             verifiedReportAt = Date()
         }
         status = reportSignatureVerified ? "已收到签名校验通过的设备状态" : "已收到状态，签名格式仍待核对；控制暂不可用"
-        if reportSignatureVerified, let pendingControl,
-           pendingControl.allSatisfy({ report[$0.key] == $0.value }) {
-            if let power = pendingControl["power"] {
-                commandStatus = "加湿器已确认：\(power == 1 ? "开机" : "关机")"
-            } else {
-                commandStatus = "加湿器已确认调节后的状态"
-            }
-            self.pendingControl = nil
-            isSendingControl = false
-            commandTimeout?.cancel()
-            commandTimeout = nil
-        }
+        resolvePendingControl()
         event("收到注册设备的 awStatus 状态")
         if reportSignatureVerified {
             startStatusPolling()
@@ -774,28 +778,153 @@ final class A3LocalSession: ObservableObject {
         sendControl(values, expected: ["mode": 0, "cadr": percentage])
     }
 
+    /// Child lock, negative ions and water refill are plain awControl fields
+    /// (MqttAwControl: power/mode/cadr/waterflood/lock/anion).
+    func setSwitch(_ field: String, enabled: Bool) {
+        guard canControl, !isSendingControl,
+              let values = Self.switchValues(from: report, field: field, enabled: enabled) else { return }
+        sendControl(values, expected: [field: enabled ? 1 : 0])
+    }
+
+    nonisolated static let targetHumidityRange = 30...80
+    private static let humidityFormatKey = "A3ConfirmedHumidityFormat"
+
+    var targetHumidity: Int? { settingsReport["hThreshold"] ?? report["hThreshold"] }
+
+    /// EXPERIMENTAL. No public source documents the write format for
+    /// hThreshold, so each candidate is sent only after the previous one was
+    /// not confirmed, and only a device-reported hThreshold counts as success.
+    func setTargetHumidity(_ target: Int) {
+        guard canControl, !isSendingControl, Self.targetHumidityRange.contains(target) else { return }
+        var formats = [0, 1]
+        let remembered = UserDefaults.standard.object(forKey: Self.humidityFormatKey) as? Int
+        if let remembered, formats.contains(remembered) {
+            formats.removeAll { $0 == remembered }
+            formats.insert(remembered, at: 0)
+        }
+        humidityAttempt = (target, formats, -1)
+        sendNextHumidityFormat()
+    }
+
+    private func sendNextHumidityFormat() {
+        guard let identity, var attempt = humidityAttempt, !attempt.formats.isEmpty else {
+            humidityAttempt = nil
+            return
+        }
+        let format = attempt.formats.removeFirst()
+        attempt.current = format
+        humidityAttempt = attempt
+        let time = Int(Date().timeIntervalSince1970)
+        let payload: Data
+        if format == 0 {
+            // awSet mirrors the 1003 settings report: echo every known setting
+            // the device reported, changing only hThreshold.
+            var settings = settingsReport
+            settings["hThreshold"] = attempt.target
+            payload = Self.settingsPayload(settings: settings, time: time, key: identity.key)
+        } else {
+            guard var values = Self.powerValues(from: report, enabled: report["power"] == 1) else {
+                humidityAttempt = nil
+                commandStatus = "设备状态字段不完整，暂不能安全发送控制"
+                return
+            }
+            values["hThreshold"] = attempt.target
+            payload = Self.powerPayload(values: values, time: time, key: identity.key)
+        }
+        event("目标湿度实验：尝试格式 \(format == 0 ? "awSet" : "awControl+hThreshold")")
+        publishControl(payload, expected: ["hThreshold": attempt.target], timeout: 8)
+    }
+
     private func sendControl(_ values: [String: Int], expected: [String: Int]) {
         guard let identity else { return }
-        commandTimeout?.cancel()
+        humidityAttempt = nil
         let payload = Self.powerPayload(values: values, time: Int(Date().timeIntervalSince1970), key: identity.key)
+        publishControl(payload, expected: expected, timeout: 20)
+    }
+
+    private func publishControl(_ payload: Data, expected: [String: Int], timeout: TimeInterval) {
+        guard let identity else { return }
+        commandTimeout?.cancel()
         let recipients = mqtt.publish(topic: "airwater/01/1/0/1/\(identity.id)", payload: payload)
         pendingControl = recipients > 0 ? expected : nil
+        pendingBaseline = report.merging(settingsReport) { _, setting in setting }
         isSendingControl = recipients > 0
         commandStatus = recipients > 0 ? "指令已发送，等待加湿器确认" : "加湿器尚未订阅控制消息"
         event(commandStatus)
-        guard recipients > 0 else { return }
+        guard recipients > 0 else { humidityAttempt = nil; return }
+        requestStatusFollowUps()
         commandTimeout = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: 12_000_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000)) } catch { return }
             guard let self, self.pendingControl != nil else { return }
             self.pendingControl = nil
+            if let attempt = self.humidityAttempt, !attempt.formats.isEmpty {
+                self.sendNextHumidityFormat()
+                return
+            }
+            let wasHumidity = self.humidityAttempt != nil
+            self.humidityAttempt = nil
             self.isSendingControl = false
-            self.commandStatus = "暂未收到设备确认，请检查机身状态后重试"
+            self.commandStatus = wasHumidity ? "设备未回报新的目标湿度，可能不支持远程设置；请用机身 M 键调整"
+                : "暂未收到设备确认，请检查机身状态后重试"
             self.event(self.commandStatus)
         }
     }
 
+    /// The 10 s poll alone can miss a 12–20 s confirmation window; ask for
+    /// fresh reports shortly after a control instead.
+    private func requestStatusFollowUps() {
+        statusFollowUps?.cancel()
+        statusFollowUps = Task { [weak self] in
+            for delay in [1.2, 3.5, 7.0, 12.0] as [Double] {
+                do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+                guard let self, self.isRunning, self.pendingControl != nil else { return }
+                if let clientID = self.observedClientID { self.lastStatusRequests[clientID] = nil }
+                self.requestStatus()
+            }
+        }
+    }
+
+    private func resolvePendingControl() {
+        guard reportSignatureVerified, let pendingControl else { return }
+        let current = report.merging(settingsReport) { _, setting in setting }
+        guard Self.controlApplied(pendingControl, current: current, baseline: pendingBaseline) else { return }
+        if let power = pendingControl["power"] {
+            commandStatus = "加湿器已确认：\(power == 1 ? "开机" : "关机")"
+        } else if pendingControl["hThreshold"] != nil {
+            commandStatus = "加湿器已确认调节后的目标湿度"
+        } else {
+            commandStatus = "加湿器已确认调节后的状态"
+        }
+        if pendingControl["hThreshold"] != nil, let used = humidityAttempt?.current, used >= 0 {
+            UserDefaults.standard.set(used, forKey: Self.humidityFormatKey)
+            event("目标湿度实验：格式 \(used == 0 ? "awSet" : "awControl+hThreshold") 已被设备确认")
+        }
+        humidityAttempt = nil
+        self.pendingControl = nil
+        pendingBaseline = [:]
+        isSendingControl = false
+        commandTimeout?.cancel()
+        commandTimeout = nil
+        statusFollowUps?.cancel()
+        statusFollowUps = nil
+    }
+
+    /// Exact match, except cadr: firmware quantizes fan speed, so any reported
+    /// value within one step of the request, or a move away from the
+    /// pre-command value toward it, counts as applied.
+    nonisolated static func controlApplied(_ expected: [String: Int], current: [String: Int], baseline: [String: Int]) -> Bool {
+        expected.allSatisfy { field, target in
+            guard let value = current[field] else { return false }
+            guard field == "cadr", value != target else { return value == target }
+            if abs(value - target) <= 10 { return true }
+            guard let before = baseline[field], before != target else { return false }
+            return value != before && abs(value - target) < abs(before - target)
+        }
+    }
+
     nonisolated static func operationValues(from report: [String: Int], mode: Int, fan: Int? = nil) -> [String: Int]? {
-        guard (0...2).contains(mode), report["mode"] != 5,
+        // 4 is the device's cleaning cycle (AwMode.clean in the Android app).
+        guard [0, 1, 2, 4].contains(mode), report["mode"] != 5,
               let power = report["power"], (0...1).contains(power),
               var values = powerValues(from: report, enabled: power == 1) else { return nil }
         if let fan {
@@ -803,6 +932,14 @@ final class A3LocalSession: ObservableObject {
             values["cadr"] = fan
         }
         values["mode"] = mode
+        return values
+    }
+
+    nonisolated static func switchValues(from report: [String: Int], field: String, enabled: Bool) -> [String: Int]? {
+        guard ["lock", "anion", "waterflood"].contains(field),
+              let power = report["power"], (0...1).contains(power),
+              var values = powerValues(from: report, enabled: power == 1) else { return nil }
+        values[field] = enabled ? 1 : 0
         return values
     }
 
@@ -823,8 +960,17 @@ final class A3LocalSession: ObservableObject {
     nonisolated static func powerPayload(values: [String: Int], time: Int, key: String) -> Data {
         // Match original Android JSONObject insertion order, including data fields.
         let fields = ["power", "mode", "cadr", "waterflood", "lock", "anion"]
-        let data = fields.map { "\"\($0)\":\(values[$0]!)" }.joined(separator: ",")
+        // Fixed fields first in Android order; any extra (experimental) field after.
+        let extra = values.keys.filter { !fields.contains($0) }.sorted()
+        let data = (fields + extra).map { "\"\($0)\":\(values[$0]!)" }.joined(separator: ",")
         let inner = "\"cmdId\":1000,\"name\":\"awControl\",\"time\":\(time),\"from\":4,\"data\":{\(data)}"
+        return Data(("{" + inner + ",\"sig\":\"" + signature(inner, key: key) + "\"}").utf8)
+    }
+
+    nonisolated static func settingsPayload(settings: [String: Int], time: Int, key: String) -> Data {
+        let ordered = settingFields.filter { settings[$0] != nil }
+        let data = ordered.map { "\"\($0)\":\(settings[$0]!)" }.joined(separator: ",")
+        let inner = "\"cmdId\":1002,\"name\":\"awSet\",\"time\":\(time),\"from\":4,\"data\":{\(data)}"
         return Data(("{" + inner + ",\"sig\":\"" + signature(inner, key: key) + "\"}").utf8)
     }
 

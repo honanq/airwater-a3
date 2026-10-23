@@ -13,6 +13,10 @@ struct ConnectionView: View {
     @State private var controlNavigationID = UUID()
     /// Optimistic mode highlight until the device confirms (or rejects) it.
     @State private var pendingMode: Int?
+    /// Which control is waiting for device confirmation ("lock", "hThreshold", …).
+    @State private var pendingField: String?
+    @State private var targetDraft = 50
+    @State private var editingTarget = false
     /// Bumped on every device-confirmed change; drives the gauge ripple.
     @State private var applyPulse = 0
     @State private var toast: FeedbackToast?
@@ -96,9 +100,16 @@ struct ConnectionView: View {
         .onChange(of: session.report["mode"]) { mode in
             if mode == pendingMode { pendingMode = nil }
         }
+        .onChange(of: session.targetHumidity) { value in
+            if !editingTarget, pendingField != "hThreshold", let value { targetDraft = clampTarget(value) }
+        }
         .onChange(of: session.isSendingControl) { sending in
             guard !sending else { return }
             pendingMode = nil
+            let wasTarget = pendingField == "hThreshold"
+            pendingField = nil
+            editingTarget = false
+            if wasTarget, let value = session.targetHumidity { targetDraft = clampTarget(value) }
             let message = session.commandStatus
             if message.hasPrefix("加湿器已确认") || message.hasPrefix("实机开关") {
                 applyPulse += 1
@@ -110,6 +121,7 @@ struct ConnectionView: View {
             }
         }
         .onAppear {
+            if let value = session.targetHumidity { targetDraft = clampTarget(value) }
             guard !didAutostart else { return }
             didAutostart = true
             session.recordBluetooth(status: bluetooth.status)
@@ -163,13 +175,27 @@ struct ConnectionView: View {
         return session.report["h"].flatMap { (0...10000).contains($0) ? Double($0) / 100 : nil }
     }
 
-    private var targetHumidity: Int? { session.report["hThreshold"] }
+    private var targetHumidity: Int? { session.targetHumidity }
+
+    private func clampTarget(_ value: Int) -> Int {
+        min(max(value, A3LocalSession.targetHumidityRange.lowerBound), A3LocalSession.targetHumidityRange.upperBound)
+    }
+
+    private var temperature: Double? {
+        for key in ["t", "t0"] {
+            if let raw = session.report[key], raw > 0, raw < 99999 { return Double(raw) / 100 }
+        }
+        return nil
+    }
+
+    private var waterLevel: Int? { session.report["water"].flatMap { (0...110).contains($0) ? min($0, 100) : nil } }
 
     private var modeName: String {
         switch session.report["mode"] {
         case 0: return "手动模式"
         case 1: return "自动模式"
         case 2: return "睡眠模式"
+        case 4: return "清洁中"
         case 5: return "缺水保护"
         default: return "模式未知"
         }
@@ -264,13 +290,16 @@ struct ConnectionView: View {
                 waterAlert.transition(.move(edge: .top).combined(with: .opacity))
             }
             operationCard.entrance(2)
+            targetCard.entrance(3)
+            featuresCard.entrance(3)
             statsGrid.entrance(3)
         }
     }
 
     private var gaugeCard: some View {
         VStack(spacing: 20) {
-            HumidityGauge(humidity: bodyHumidity, target: targetHumidity,
+            // While dragging the target control, preview the new marker on the dial.
+            HumidityGauge(humidity: bodyHumidity, target: editingTarget || pendingField == "hThreshold" ? targetDraft : targetHumidity,
                           active: isPowerOn && session.canControl, caption: "机身湿度", applyPulse: applyPulse)
                 .matchedGeometryEffect(id: "core", in: coreNamespace)
                 .padding(.top, 4)
@@ -356,11 +385,65 @@ struct ConnectionView: View {
                 }
                 .disabled(!session.canAdjustOperation)
             }
-            Text(waterShortage ? "加水并恢复正常后，可调节模式和风量。" : "调节风量会切换到手动模式。")
+            Text(waterShortage ? "加水并恢复正常后，可调节模式和风量。" : "调节风量会切换到手动模式；清洁模式会运行机器自带的清洁流程。")
                 .font(Mist.rounded(12, .medium))
                 .foregroundStyle(Mist.tertiary)
         }
         .glassCard()
+    }
+
+    private var targetCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                cardTitle("目标湿度", icon: "scope")
+                Spacer()
+                Text("实验")
+                    .font(Mist.rounded(11, .bold))
+                    .foregroundStyle(Mist.amber)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Mist.amber.opacity(0.15)))
+            }
+            TargetHumidityControl(value: Binding(
+                get: { targetDraft },
+                set: { targetDraft = $0; editingTarget = true }
+            ), range: A3LocalSession.targetHumidityRange, pending: pendingField == "hThreshold") {
+                guard session.canControl, !session.isSendingControl else { return }
+                guard targetDraft != targetHumidity else { editingTarget = false; return }
+                pendingField = "hThreshold"
+                session.setTargetHumidity(targetDraft)
+                if !session.isSendingControl { pendingField = nil; editingTarget = false }
+            }
+            .disabled(!session.canControl || (session.isSendingControl && pendingField != "hThreshold"))
+            Text("自动模式下机器会按目标湿度调节。远程设置的报文格式尚未公开，App 会依次尝试，只有机器回报新数值才算成功；不支持时请用机身 M 键调整。")
+                .font(Mist.rounded(12, .medium))
+                .foregroundStyle(Mist.tertiary)
+        }
+        .glassCard(tint: Mist.amber)
+    }
+
+    private var featuresCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            cardTitle("功能开关", icon: "switch.2")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                featureTile("lock", icon: "lock.fill", title: "童锁", on: "机身按键已锁定", off: "机身按键可用", tint: Mist.violet)
+                featureTile("anion", icon: "sparkle", title: "负离子", on: "负离子已开启", off: "负离子已关闭", tint: Mist.mint)
+                featureTile("waterflood", icon: "drop.triangle.fill", title: "上水", on: "正在上水", off: "需要时手动上水", tint: Mist.aqua)
+            }
+        }
+        .glassCard()
+    }
+
+    private func featureTile(_ field: String, icon: String, title: String, on: String, off: String, tint: Color) -> some View {
+        let isOn = session.report[field] == 1
+        return FeatureSwitchTile(icon: icon, title: title, detail: isOn ? on : off, isOn: isOn,
+                                 pending: pendingField == field, tint: tint) {
+            guard session.canControl, !session.isSendingControl else { return }
+            pendingField = field
+            session.setSwitch(field, enabled: !isOn)
+            if !session.isSendingControl { pendingField = nil }
+        }
+        .disabled(!session.canControl || session.report[field] == nil
+                  || (session.isSendingControl && pendingField != field))
     }
 
     private var statsGrid: some View {
@@ -380,8 +463,22 @@ struct ConnectionView: View {
             StatTile(icon: "wind", title: "当前风量",
                      value: session.report["cadr"].map { "\($0)%" } ?? "--",
                      tint: Mist.mint, progress: session.report["cadr"].map { Double($0) / 100 })
+            if let temperature {
+                StatTile(icon: "thermometer.medium", title: "温度",
+                         value: String(format: "%.1f°C", temperature), tint: Mist.coral,
+                         progress: min(max(temperature / 40, 0), 1))
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+            if let waterLevel {
+                StatTile(icon: "waterbottle.fill", title: "水箱水量",
+                         value: "\(waterLevel)%", tint: waterLevel < 20 ? Mist.amber : Mist.aqua,
+                         progress: Double(waterLevel) / 100)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: sensorHumidity != nil)
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: temperature != nil)
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: waterLevel != nil)
     }
 
     // MARK: - Connection

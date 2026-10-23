@@ -8,7 +8,7 @@ settings:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.1"
-    CURRENT_PROJECT_VERSION: "11"
+    CURRENT_PROJECT_VERSION: "12"
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 targets:
   AirwaterProbe:
@@ -26,6 +26,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # Without this, iPhone apps are capped at 60 Hz for custom animations on ProMotion displays.
+        CADisableMinimumFrameDurationOnPhone: true
         NSLocalNetworkUsageDescription: 与您选择的 A3 加湿器进行本地通信。
         NSBluetoothAlwaysUsageDescription: 发现您选择的 A3，并通过蓝牙将其连接到此手机的个人热点。
         CFBundleURLTypes:

@@ -65,6 +65,17 @@ enum ProtocolChecks {
         check("Protection state and out-of-range operation changes are blocked", A3LocalSession.operationValues(from: capturedReport, mode: 1) == nil
               && A3LocalSession.operationValues(from: manualReport, mode: 5) == nil
               && [-1, 101].allSatisfy { A3LocalSession.operationValues(from: manualReport, mode: 0, fan: $0) == nil })
+        check("Quantized fan speed still confirms; an unchanged one does not",
+              A3LocalSession.controlApplied(["mode": 0, "cadr": 47], current: ["mode": 0, "cadr": 45], baseline: ["cadr": 20])
+              && A3LocalSession.controlApplied(["cadr": 90], current: ["cadr": 75], baseline: ["cadr": 20])
+              && !A3LocalSession.controlApplied(["cadr": 90], current: ["cadr": 20], baseline: ["cadr": 20])
+              && !A3LocalSession.controlApplied(["power": 1], current: ["power": 0], baseline: [:]))
+        check("Switches change only their own control field",
+              A3LocalSession.switchValues(from: manualReport, field: "lock", enabled: false) == ["power": 0, "mode": 1, "cadr": 35, "waterflood": 0, "lock": 0, "anion": 0]
+              && A3LocalSession.switchValues(from: manualReport, field: "power", enabled: true) == nil)
+        let extended = String(data: A3LocalSession.powerPayload(values: ["power": 1, "mode": 0, "cadr": 30, "waterflood": 0, "lock": 0, "anion": 1, "hThreshold": 55],
+                                                                time: 1_700_000_000, key: "fixture-key"), encoding: .utf8)!
+        check("Extra control fields follow the fixed Android order", extended.contains("\"anion\":1,\"hThreshold\":55}"))
         for (name, passed) in A3Bluetooth.offlineChecks() { check(name, passed) }
         let value: [String: Any] = ["timestamp": ISO8601DateFormatter().string(from: Date()),
                                     "checks": checks, "failed": checks.filter { !($0["passed"] as? Bool ?? false) }.count,

@@ -37,7 +37,7 @@ struct LiquidFill: View {
     @State private var clock = PhaseClock()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 40, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { timeline in
             let phase = clock.advance(timeline.date.timeIntervalSinceReferenceDate, speed: active ? 2.4 : 0.8)
             ZStack {
                 WaveShape(level: level, amplitude: active ? 7 : 3, phase: phase * 1.3 + 1.8, frequency: 1.1)
