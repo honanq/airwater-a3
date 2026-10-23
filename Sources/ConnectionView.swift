@@ -10,6 +10,8 @@ struct ConnectionView: View {
     @State private var didAutostart = false
     @State private var fan = 0.0
     @State private var editingFan = false
+    @State private var controlNavigationID = UUID()
+    @AppStorage(SimedgeConnectionBridge.enabledKey) private var simedgeConnectionEnabled = false
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,13 @@ struct ConnectionView: View {
                     operationSection
                 }
                 connectionSection
+                Section("Simedge 快捷连接") {
+                    Toggle("允许 Simedge 一键连接", isOn: $simedgeConnectionEnabled)
+                    Text("首次完成下方蓝牙配网后，在 Simedge 快捷工具中添加“连接秒新 A3”。它会先关闭热点、等待本地服务就绪，再开启热点并等待 A3 接入，无需苹果快捷指令。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("后台时间不足时会提前打开本 App 继续连接；控制期间请保持 App 在前台。连接只建立通道，不会自动启动加湿。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section {
                     DisclosureGroup("连接诊断") {
                         Text("设备消息连接数：\(session.connectedClients)")
@@ -69,13 +78,28 @@ struct ConnectionView: View {
                 }
                 .accessibilityIdentifier("connection-diagnostics")
             }
-            .navigationTitle("AirWater A3")
+            .navigationTitle("秒新加湿器")
+        }
+        .id(controlNavigationID)
+        .onReceive(NotificationCenter.default.publisher(for: SimedgeConnectionBridge.showControlNotification)) { _ in
+            controlNavigationID = UUID()
         }
         .onChange(of: scenePhase) { phase in
-            if phase == .background { session.enteredBackground() }
-            if phase == .active { session.becameActive() }
+            if phase == .background {
+                session.enteredBackground()
+                SimedgeConnectionBridge.shared.enteredBackground()
+            }
+            if phase == .active {
+                session.becameActive()
+                SimedgeConnectionBridge.shared.becameActive()
+            }
         }
-        .onOpenURL { coordinator.handleCallback($0) }
+        .onOpenURL { url in
+            if !SimedgeConnectionBridge.shared.handle(url) { coordinator.handleCallback(url) }
+        }
+        .onChange(of: simedgeConnectionEnabled) { enabled in
+            SimedgeConnectionBridge.shared.preferenceChanged(enabled: enabled)
+        }
         .onChange(of: bluetooth.status) { status in
             // Observe value transitions, not a publisher recreated by body updates.
             // @Published replays its current value on each new subscription;

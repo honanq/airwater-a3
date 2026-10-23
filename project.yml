@@ -8,19 +8,21 @@ settings:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.1"
-    CURRENT_PROJECT_VERSION: "8"
+    CURRENT_PROJECT_VERSION: "9"
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 targets:
   AirwaterProbe:
     type: application
     platform: iOS
     sources:
       - path: Sources
+      - path: Assets.xcassets
       - path: Resources
         buildPhase: resources
     info:
       path: .build/Info.plist
       properties:
-        CFBundleDisplayName: A3连接诊断
+        CFBundleDisplayName: 秒新加湿器
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -35,29 +37,3 @@ targets:
         CODE_SIGN_STYLE: Automatic
     scheme:
       gatherCoverageData: false
-      testTargets:
-        - AirwaterProbeTests
-        - AirwaterProbeUITests
-  AirwaterProbeTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - path: Tests
-    dependencies:
-      - target: AirwaterProbe
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.sudohg.airwaterprobe.tests
-  AirwaterProbeUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: UITests
-    dependencies:
-      - target: AirwaterProbe
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.sudohg.airwaterprobe.uitests
-        TEST_TARGET_NAME: AirwaterProbe

@@ -2,8 +2,12 @@ import SwiftUI
 import AppIntents
 
 @main
+@MainActor
 struct ProbeApp: App {
-    init() { A3AppShortcuts.updateAppShortcutParameters() }
+    init() {
+        SimedgeConnectionBridge.shared.start()
+        A3AppShortcuts.updateAppShortcutParameters()
+    }
 
     var body: some Scene {
         WindowGroup {

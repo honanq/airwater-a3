@@ -1,6 +1,6 @@
 # 构建与安装 / Build and install
 
-这是源码分发，需要 Mac、Xcode 和自己的 Apple 开发签名。仓库不包含 IPA、描述文件、签名安装包或他人的开发证书。普通用户目前不能从仓库直接安装一个已分发的 App。
+此 fork 提供源码与 GitHub Actions 生成的未签名 IPA；没有 App Store 或 TestFlight 分发。安装 IPA 或从源码运行都需要自己的 Apple 开发签名；仓库不包含他人的证书或描述文件。
 
 ## 环境
 
@@ -70,16 +70,19 @@ make build
 
 修复改用 iOS 16 起可用的 `onChange(of:)` 监听实际状态变化，首次出现时仅记录一次初始状态；会话层额外保存最近蓝牙状态，重复值不再发布日志或写盘。未改变连接协议、控制权限或热点流程。
 
-GitHub Actions 在打包前运行单元测试（含 1,000 次重订阅和原有离线协议检查）及首页 UI 测试（展开/收起、诊断、配网导航和文本输入）。测试优先使用 runner 已安装的最旧 iOS 模拟器，实际系统版本记录在构建日志中；它不等于 iOS 17.1.1 真机验收。测试不启动本地服务、不扫描蓝牙、不向 A3 发送命令。测试结果与截图作为 `interaction-test-results` artifact 保存。
+构建 8 的 4 项单元测试和 2 项 UI 测试已在 iOS 27.0 模拟器通过；用户随后确认 iOS 17.1.1 首页恢复可点击。按用户要求，构建 9 移除这些测试源码、测试 target 和 CI 测试步骤，保留修复本身及发布目录检查。
 
-本地 Mac 可在生成工程后运行：
+## Simedge 一键连接（构建 9）
 
-```sh
-SIMULATOR_ID=$(python3 scripts/select_simulator.py)
-xcodebuild -project AirwaterProbe.xcodeproj -scheme AirwaterProbe \
-  -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
-```
+App 显示名称改为「秒新加湿器」，使用原创蓝青渐变水滴图标；Bundle ID、URL scheme 与 Keychain 服务名不变，便于原签名覆盖安装。
+
+首次完成原有蓝牙配网，并开启首页「允许 Simedge 一键连接」。在配套 Simedge 的「快捷工具、URL 与快捷指令」中添加「连接秒新 A3」。后续无需苹果快捷指令，由 SpringBoard 端关闭热点 → App 准备本地服务 → SpringBoard 开启热点 → App 等到经过验证的设备报告 → 打开控制页。
+
+两端只交换带短时请求编号的 Darwin 通知，绝不交换热点密码或设备 key，不启动加湿、不改模式和风量。不支持的系统热点接口、未安装配套 App、未授权、连接占用、锁屏或超时会明确失败；失败后尝试恢复本次操作前的热点状态。通知编号用于隔离旧回调，不是认证机制；仅在信任本机软件时开启接入。
+
+优先尝试后台唤醒，但不使用强制常驻或无限后台权限。冷启动不支持或后台时间不足时，会提前打开 App 继续连接，所以不能保证所有设备都只在成功后才显示 App。连接成功仍需 App 在前台维持本地控制，每轮上限 10 分钟。
+
+详细协议和接入步骤见 [Simedge 连接协议](SIMEDGE.md)。Simedge 部分依赖越狱环境的私有系统接口，需用户手动编译并在自己的 iOS 17.1.1 设备验收；IPA 编译成功不等于热点链路已实测。
 
 ## English quick guide
 

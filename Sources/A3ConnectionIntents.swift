@@ -55,7 +55,7 @@ final class A3ConnectionCoordinator: ObservableObject {
             let ticket = try await session.prepareConnection()
             guard activeRunID == runID else { throw CancellationError() }
             preparedConnectionID = ticket
-            shortcutMessage = "服务已就绪，快捷指令正在开启热点…"
+            shortcutMessage = "服务已就绪，连接工具正在开启热点…"
             return runID.uuidString
         } catch {
             if activeRunID == runID {

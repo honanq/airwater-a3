@@ -36,10 +36,16 @@ def main():
         if not path.is_file():
             errors.append(f"{name}: missing file")
             continue
-        if name in REVIEWED_IMAGES:
+        icon_match = re.fullmatch(r"Assets\.xcassets/AppIcon\.appiconset/Icon-(\d+)\.png", name)
+        if name in REVIEWED_IMAGES or icon_match:
             data = path.read_bytes()
             if not data.startswith(b"\x89PNG\r\n\x1a\n") or not data.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82"):
-                errors.append(f"{name}: expected a reviewed PNG screenshot")
+                errors.append(f"{name}: expected a reviewed PNG image")
+            if icon_match:
+                size = int(icon_match.group(1))
+                dimensions = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+                if not 20 <= size <= 1024 or dimensions != (size, size) or data[25:26] != b"\x02":
+                    errors.append(f"{name}: expected a square opaque RGB app icon")
             continue
         try:
             content = path.read_text(encoding="utf-8")
