@@ -8,6 +8,10 @@ final class A3ConnectionCoordinator: ObservableObject {
     let session = A3LocalSession()
     @Published private(set) var shortcutMessage = ""
     @Published private(set) var isInvokingShortcut = false
+    /// The Simedge bridge replaces stale Shortcuts wording with its own status.
+    func adoptExternalRun() {
+        shortcutMessage = "正在准备本地服务…"
+    }
     private var preparedConnectionID: UUID?
     private var activeRunID: UUID?
     private var shortcutAttempt: UUID?

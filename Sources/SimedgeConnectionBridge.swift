@@ -145,6 +145,7 @@ final class SimedgeConnectionBridge {
             let coordinator = A3ConnectionCoordinator.shared
             guard !coordinator.session.isStarting, !coordinator.session.isRunning,
                   !coordinator.isInvokingShortcut else { fail(value, code: 2); return }
+            coordinator.adoptExternalRun()
             stage = "preparing"
             let runID = UUID()
             connectionToken = runID.uuidString
