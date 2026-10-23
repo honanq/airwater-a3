@@ -29,11 +29,15 @@ final class A3ConnectionCoordinator: ObservableObject {
         session.stop()
     }
 
-    func prepare() async throws -> String {
+    func cancelConnection(ifToken token: String) {
+        guard let runID = UUID(uuidString: token), activeRunID == runID else { return }
+        cancelConnection()
+    }
+
+    func prepare(runID: UUID = UUID()) async throws -> String {
         try Task.checkCancellation()
         connectionWaitTask?.cancel()
         connectionWaitTask = nil
-        let runID = UUID()
         // Once an Intent takes ownership, only its run token may finish/stop it.
         // An older x-callback URL cannot identify a newer direct Shortcuts run.
         shortcutAttempt = nil

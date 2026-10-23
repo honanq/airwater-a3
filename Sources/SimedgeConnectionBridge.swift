@@ -135,8 +135,6 @@ final class SimedgeConnectionBridge {
         post("accepted", for: value)
     }
 
-    private var ownsConnection = false
-
     private func receive(_ event: String, for value: UInt64) {
         guard request == value else { return }
         switch event {
@@ -148,10 +146,11 @@ final class SimedgeConnectionBridge {
             guard !coordinator.session.isStarting, !coordinator.session.isRunning,
                   !coordinator.isInvokingShortcut else { fail(value, code: 2); return }
             stage = "preparing"
-            ownsConnection = true
+            let runID = UUID()
+            connectionToken = runID.uuidString
             task = Task { @MainActor [weak self] in
                 do {
-                    let token = try await coordinator.prepare()
+                    let token = try await coordinator.prepare(runID: runID)
                     guard let self, self.request == value, !Task.isCancelled else { return }
                     self.connectionToken = token
                     self.stage = "waiting-hotspot"
@@ -204,7 +203,7 @@ final class SimedgeConnectionBridge {
     private func fail(_ value: UInt64, code: UInt64) {
         guard request == value else { return }
         task?.cancel()
-        if ownsConnection { A3ConnectionCoordinator.shared.cancelConnection() }
+        if let token = connectionToken { A3ConnectionCoordinator.shared.cancelConnection(ifToken: token) }
         lastFinishedRequest = value
         lastFailure = code
         post("failed", for: value, state: code)
@@ -226,7 +225,6 @@ final class SimedgeConnectionBridge {
         observers.removeAll()
         request = nil
         connectionToken = nil
-        ownsConnection = false
         stage = "idle"
         endBackgroundTask()
     }

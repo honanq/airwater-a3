@@ -35,5 +35,6 @@ targets:
     settings:
       base:
         CODE_SIGN_STYLE: Automatic
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/AirwaterProbe-Bridging-Header.h
     scheme:
       gatherCoverageData: false
