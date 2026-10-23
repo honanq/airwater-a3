@@ -53,8 +53,7 @@ struct ModeSelector: View {
     @Environment(\.isEnabled) private var isEnabled
 
     static let modes: [(tag: Int, title: String, icon: String)] = [
-        (0, "手动", "hand.raised.fill"), (1, "自动", "sparkles"), (2, "睡眠", "moon.zzz.fill"),
-        (4, "清洁", "bubbles.and.sparkles.fill")
+        (0, "手动", "hand.raised.fill"), (1, "自动", "sparkles"), (2, "睡眠", "moon.zzz.fill")
     ]
 
     var body: some View {

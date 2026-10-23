@@ -195,7 +195,6 @@ struct ConnectionView: View {
         case 0: return "手动模式"
         case 1: return "自动模式"
         case 2: return "睡眠模式"
-        case 4: return "清洁中"
         case 5: return "缺水保护"
         default: return "模式未知"
         }
@@ -385,7 +384,7 @@ struct ConnectionView: View {
                 }
                 .disabled(!session.canAdjustOperation)
             }
-            Text(waterShortage ? "加水并恢复正常后，可调节模式和风量。" : "调节风量会切换到手动模式；清洁模式会运行机器自带的清洁流程。")
+            Text(waterShortage ? "加水并恢复正常后，可调节模式和风量。" : "调节风量会切换到手动模式。")
                 .font(Mist.rounded(12, .medium))
                 .foregroundStyle(Mist.tertiary)
         }
@@ -414,7 +413,7 @@ struct ConnectionView: View {
                 if !session.isSendingControl { pendingField = nil; editingTarget = false }
             }
             .disabled(!session.canControl || (session.isSendingControl && pendingField != "hThreshold"))
-            Text("自动模式下机器会按目标湿度调节。远程设置的报文格式尚未公开，App 会依次尝试，只有机器回报新数值才算成功；不支持时请用机身 M 键调整。")
+            Text("自动模式下机器会按目标湿度调节。")
                 .font(Mist.rounded(12, .medium))
                 .foregroundStyle(Mist.tertiary)
         }
@@ -427,7 +426,6 @@ struct ConnectionView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 featureTile("lock", icon: "lock.fill", title: "童锁", on: "机身按键已锁定", off: "机身按键可用", tint: Mist.violet)
                 featureTile("anion", icon: "sparkle", title: "负离子", on: "负离子已开启", off: "负离子已关闭", tint: Mist.mint)
-                featureTile("waterflood", icon: "drop.triangle.fill", title: "上水", on: "正在上水", off: "需要时手动上水", tint: Mist.aqua)
             }
         }
         .glassCard()

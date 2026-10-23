@@ -778,7 +778,7 @@ final class A3LocalSession: ObservableObject {
         sendControl(values, expected: ["mode": 0, "cadr": percentage])
     }
 
-    /// Child lock, negative ions and water refill are plain awControl fields
+    /// Child lock and negative ions are plain awControl fields
     /// (MqttAwControl: power/mode/cadr/waterflood/lock/anion).
     func setSwitch(_ field: String, enabled: Bool) {
         guard canControl, !isSendingControl,
@@ -923,8 +923,7 @@ final class A3LocalSession: ObservableObject {
     }
 
     nonisolated static func operationValues(from report: [String: Int], mode: Int, fan: Int? = nil) -> [String: Int]? {
-        // 4 is the device's cleaning cycle (AwMode.clean in the Android app).
-        guard [0, 1, 2, 4].contains(mode), report["mode"] != 5,
+        guard (0...2).contains(mode), report["mode"] != 5,
               let power = report["power"], (0...1).contains(power),
               var values = powerValues(from: report, enabled: power == 1) else { return nil }
         if let fan {
@@ -936,7 +935,7 @@ final class A3LocalSession: ObservableObject {
     }
 
     nonisolated static func switchValues(from report: [String: Int], field: String, enabled: Bool) -> [String: Int]? {
-        guard ["lock", "anion", "waterflood"].contains(field),
+        guard ["lock", "anion"].contains(field),
               let power = report["power"], (0...1).contains(power),
               var values = powerValues(from: report, enabled: power == 1) else { return nil }
         values[field] = enabled ? 1 : 0
