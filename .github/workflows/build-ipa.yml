@@ -1,0 +1,95 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (leave empty to use ci-<run number>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: xcode-27
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest Xcode 27
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app || true
+          XCODE=$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AirwaterProbe.xcodeproj \
+            -scheme AirwaterProbe \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .derivedData/ci \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP=$(find .derivedData/ci/Build/Products -maxdepth 3 -name '*.app' -type d | head -1)
+          echo "App bundle: $APP"
+          test -n "$APP"
+          rm -rf Payload AirwaterProbe-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "Payload/$(basename "$APP")/Info.plist" || true
+          ditto -c -k --sequesterRsrc --keepParent Payload AirwaterProbe-unsigned.ipa
+          ls -lh AirwaterProbe-unsigned.ipa
+          shasum -a 256 AirwaterProbe-unsigned.ipa | tee SHA256.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirwaterProbe-unsigned-ipa
+          path: |
+            AirwaterProbe-unsigned.ipa
+            SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="ci-${{ github.run_number }}"; fi
+          echo "Publishing $TAG"
+          gh release create "$TAG" AirwaterProbe-unsigned.ipa SHA256.txt \
+            --title "AirwaterProbe unsigned IPA ($TAG)" \
+            --notes "Unsigned build from commit ${{ github.sha }}. Re-sign with your own Apple ID before installing." \
+            --target "${{ github.sha }}" || \
+          gh release upload "$TAG" AirwaterProbe-unsigned.ipa SHA256.txt --clobber
