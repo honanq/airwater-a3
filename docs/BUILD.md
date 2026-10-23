@@ -64,6 +64,23 @@ make build
 
 现有 `--run-self-check` 是仅解析器/合成数据检查；它在 App 沙盒写入结果。`--run-connection-checks` 会实际绑定网络监听端口，不能把它当作纯离线测试。调试参数 `--verify-power-roundtrip` 会真实改变设备电源；不要作为安装或验证默认参数，也不要在缺水、脏污或状态不明的设备上运行。正常无参数启动不会自动执行这些测试。
 
+## iOS 17 首页交互修复（构建 8）
+
+首页原先在 `body` 中创建 `bluetooth.$status.removeDuplicates()` 并通过 `onReceive` 写入会话日志。新订阅会立即收到当前状态；日志发布 `events` 后又会触发页面刷新。旧版 SwiftUI 若重建该订阅，可形成刷新和同步写盘的反馈环，表现为首页显示后点击无响应。`removeDuplicates` 只在同一次订阅内去重，无法防止这个跨订阅问题。
+
+修复改用 iOS 16 起可用的 `onChange(of:)` 监听实际状态变化，首次出现时仅记录一次初始状态；会话层额外保存最近蓝牙状态，重复值不再发布日志或写盘。未改变连接协议、控制权限或热点流程。
+
+GitHub Actions 在打包前运行单元测试（含 1,000 次重订阅和原有离线协议检查）及首页 UI 测试（展开/收起、诊断、配网导航和文本输入）。测试优先使用 runner 已安装的最旧 iOS 模拟器，实际系统版本记录在构建日志中；它不等于 iOS 17.1.1 真机验收。测试不启动本地服务、不扫描蓝牙、不向 A3 发送命令。测试结果与截图作为 `interaction-test-results` artifact 保存。
+
+本地 Mac 可在生成工程后运行：
+
+```sh
+SIMULATOR_ID=$(python3 scripts/select_simulator.py)
+xcodebuild -project AirwaterProbe.xcodeproj -scheme AirwaterProbe \
+  -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+```
+
 ## English quick guide
 
 Use Xcode 27, XcodeGen and Python 3. Run `make generate`, open the generated project, set your own development team and unique bundle identifier, and install over USB. Keep the Mac on its existing network. No pre-signed app is distributed.

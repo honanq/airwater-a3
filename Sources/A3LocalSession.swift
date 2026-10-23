@@ -50,6 +50,7 @@ final class A3LocalSession: ObservableObject {
     private var powerCheck: Task<Void, Never>?
     private var powerCheckStarted = false
     private var cancellables = Set<AnyCancellable>()
+    private var lastRecordedBluetoothStatus: String?
 
     var canControl: Bool {
         guard let clientID = observedClientID, let deviceID = observedDeviceID else { return false }
@@ -261,6 +262,10 @@ final class A3LocalSession: ObservableObject {
     func becameActive() { endBackgroundTime() }
 
     func recordBluetooth(status: String) {
+        // Keep this idempotent even if a view or subscriber is recreated.
+        // Do not reset the guard when clearing the diagnostic event buffer.
+        guard status != lastRecordedBluetoothStatus else { return }
+        lastRecordedBluetoothStatus = status
         // Bluetooth status strings never include Wi-Fi credentials or frames.
         event("蓝牙：\(status)")
     }

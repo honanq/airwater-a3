@@ -26,7 +26,7 @@ jobs:
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version
-          xcodebuild -showsdks | grep -i iphoneos || true
+          xcodebuild -showsdks
 
       - name: Install XcodeGen
         run: |
@@ -36,8 +36,37 @@ jobs:
           fi
           xcodegen --version
 
+      - name: Publication checks
+        run: python3 scripts/check_public_tree.py
+
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
+
+      - name: Unit and UI interaction regression tests
+        run: |
+          set -euo pipefail
+          xcrun simctl list runtimes
+          SIMULATOR_ID=$(python3 scripts/select_simulator.py)
+          xcodebuild \
+            -project AirwaterProbe.xcodeproj \
+            -scheme AirwaterProbe \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 180 \
+            -derivedDataPath .derivedData/tests \
+            -resultBundlePath .build/InteractionTests.xcresult \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Upload interaction test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interaction-test-results
+          path: .build/InteractionTests.xcresult
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build (unsigned)
         run: |
@@ -58,9 +87,9 @@ jobs:
       - name: Package IPA
         run: |
           set -euo pipefail
-          APP=$(find .derivedData/ci/Build/Products -maxdepth 3 -name '*.app' -type d | head -1)
+          APP=.derivedData/ci/Build/Products/Release-iphoneos/AirwaterProbe.app
           echo "App bundle: $APP"
-          test -n "$APP"
+          test -d "$APP"
           rm -rf Payload AirwaterProbe-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
@@ -83,9 +112,10 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag }}"
+          TAG="$RELEASE_TAG"
           if [ -z "$TAG" ]; then TAG="ci-${{ github.run_number }}"; fi
           echo "Publishing $TAG"
           gh release create "$TAG" AirwaterProbe-unsigned.ipa SHA256.txt \

@@ -67,6 +67,7 @@ struct ConnectionView: View {
                             .disabled(session.isRunning)
                     }
                 }
+                .accessibilityIdentifier("connection-diagnostics")
             }
             .navigationTitle("AirWater A3")
         }
@@ -75,7 +76,10 @@ struct ConnectionView: View {
             if phase == .active { session.becameActive() }
         }
         .onOpenURL { coordinator.handleCallback($0) }
-        .onReceive(bluetooth.$status.removeDuplicates()) { status in
+        .onChange(of: bluetooth.status) { status in
+            // Observe value transitions, not a publisher recreated by body updates.
+            // @Published replays its current value on each new subscription;
+            // logging that value publishes session.events and can loop on iOS 17.
             session.recordBluetooth(status: status)
         }
         .onChange(of: session.report["cadr"]) { value in
@@ -84,6 +88,7 @@ struct ConnectionView: View {
         .onAppear {
             guard !didAutostart else { return }
             didAutostart = true
+            session.recordBluetooth(status: bluetooth.status)
             if ProcessInfo.processInfo.arguments.contains("--run-passive-ble-scan") {
                 bluetooth.startPassiveScanDiagnostic()
                 return
@@ -158,8 +163,10 @@ struct ConnectionView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("准备本地服务") { session.start() }
                 }
+                .accessibilityIdentifier("manual-connection")
             }
             NavigationLink("首次配网或更换手机热点") { provisioningView }
+                .accessibilityIdentifier("open-provisioning")
         }
     }
 
