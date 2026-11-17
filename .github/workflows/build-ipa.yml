@@ -37,7 +37,15 @@ jobs:
           xcodegen --version
 
       - name: Publication checks
-        run: python3 scripts/check_public_tree.py
+        run: make check
+
+      - name: Hotspot persistence model checks
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 5 -parse-as-library \
+            Sources/HotspotCredentials.swift Tests/HotspotSettingsChecks.swift \
+            -o "$RUNNER_TEMP/a3-hotspot-settings-checks"
+          "$RUNNER_TEMP/a3-hotspot-settings-checks"
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
