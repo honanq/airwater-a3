@@ -30,6 +30,11 @@ final class A3Bluetooth: NSObject, ObservableObject {
     @Published private(set) var devices: [Device] = []
     @Published private(set) var lastDeviceID: String?
 
+    /// Installed by the root view; persistence must not depend on the setup page
+    /// still being visible when the device's acknowledgement arrives.
+    var onProvisionAccepted: ((HotspotCredential) -> Void)?
+    private var pendingHotspotCredential: HotspotCredential?
+
     var canProvision: Bool {
         state == .ready && peripheral?.state == .connected
             && writeCharacteristic != nil && notifyCharacteristic?.isNotifying == true
@@ -372,7 +377,7 @@ final class A3Bluetooth: NSObject, ObservableObject {
         status = "已断开连接"
     }
 
-    /// 仅由用户显式调用。调用方也应立即清空自己的输入框。
+    /// 仅由用户显式调用。保留输入供校验失败/重试；设备接受后才保存到钥匙串。
     func provision(ssid: String, password: String) {
         guard canProvision else {
             status = "请先连接设备并完成 BLE 握手"
@@ -401,6 +406,7 @@ final class A3Bluetooth: NSObject, ObservableObject {
         payload.append(contentsOf: ssidBytes)
         payload.append(UInt8(passwordBytes.count))
         payload.append(contentsOf: passwordBytes)
+        pendingHotspotCredential = HotspotCredential(ssid: ssid, password: password)
         state = .provisioning
         status = "正在发送 Wi-Fi 配置…"
         sendRequest(command: 21, payload: &payload)
@@ -537,6 +543,10 @@ final class A3Bluetooth: NSObject, ObservableObject {
                 return
             }
             provisionAccepted = true
+            if let credential = pendingHotspotCredential {
+                pendingHotspotCredential = nil
+                onProvisionAccepted?(credential)
+            }
             queryDeviceID()
         case 22:
             guard message.payload.count >= 5 else {
@@ -616,6 +626,7 @@ final class A3Bluetooth: NSObject, ObservableObject {
         earlyResponse = nil
         assembly = nil
         provisionAccepted = false
+        pendingHotspotCredential = nil
         clearPendingWrites()
     }
 

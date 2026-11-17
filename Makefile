@@ -10,3 +10,4 @@ build: generate
 
 check:
 	python3 scripts/check_public_tree.py
+	python3 scripts/check_hotspot_persistence.py

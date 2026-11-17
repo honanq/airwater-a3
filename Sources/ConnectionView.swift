@@ -5,8 +5,7 @@ struct ConnectionView: View {
     @StateObject private var session = A3ConnectionCoordinator.shared.session
     @StateObject private var coordinator = A3ConnectionCoordinator.shared
     @StateObject private var bluetooth = A3Bluetooth()
-    @State private var hotspotName = ""
-    @State private var hotspotPassword = ""
+    @StateObject private var hotspot = HotspotSettings()
     @State private var didAutostart = false
     @State private var fan = 0.0
     @State private var editingFan = false
@@ -78,6 +77,7 @@ struct ConnectionView: View {
                 SimedgeConnectionBridge.shared.enteredBackground()
             }
             if phase == .active {
+                hotspot.restoreIfNeeded()
                 session.becameActive()
                 SimedgeConnectionBridge.shared.becameActive()
             }
@@ -121,6 +121,10 @@ struct ConnectionView: View {
             }
         }
         .onAppear {
+            bluetooth.onProvisionAccepted = { [hotspot] credential in
+                hotspot.rememberAccepted(credential)
+            }
+            hotspot.restoreIfNeeded()
             if let value = session.targetHumidity { targetDraft = clampTarget(value) }
             guard !didAutostart else { return }
             didAutostart = true
@@ -559,8 +563,7 @@ struct ConnectionView: View {
             }
             Rectangle().fill(Mist.hairline).frame(height: 1)
             NavigationLink {
-                ProvisioningView(session: session, bluetooth: bluetooth,
-                                 hotspotName: $hotspotName, hotspotPassword: $hotspotPassword)
+                ProvisioningView(session: session, bluetooth: bluetooth, hotspot: hotspot)
             } label: {
                 CardLinkLabel(title: "首次配网或更换手机热点", icon: "antenna.radiowaves.left.and.right")
             }
@@ -639,13 +642,16 @@ struct ConnectionView: View {
 struct ProvisioningView: View {
     @ObservedObject var session: A3LocalSession
     @ObservedObject var bluetooth: A3Bluetooth
-    @Binding var hotspotName: String
-    @Binding var hotspotPassword: String
+    @ObservedObject var hotspot: HotspotSettings
+    @State private var confirmingForget = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case name, password }
 
     private var provisioned: Bool { bluetooth.state == .provisioned }
+    private var provisioningInFlight: Bool {
+        bluetooth.state == .provisioning || bluetooth.state == .queryingDeviceID
+    }
 
     var body: some View {
         ZStack {
@@ -680,6 +686,15 @@ struct ProvisioningView: View {
         .navigationTitle("首次配网")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .confirmationDialog("忘记本机保存的热点？", isPresented: $confirmingForget, titleVisibility: .visible) {
+            Button("忘记本机配置", role: .destructive) {
+                guard !provisioningInFlight else { return }
+                hotspot.forget()
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("仅删除本 App 保存的名称和密码，不修改 iPhone 个人热点或 A3 的 Wi-Fi 配置。")
+        }
     }
 
     private var introCard: some View {
@@ -742,27 +757,38 @@ struct ProvisioningView: View {
     private var credentialSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             inputField(icon: "personalhotspot", focused: focusedField == .name) {
-                TextField("个人热点名称（iPhone 名称）", text: $hotspotName)
+                TextField("个人热点名称（iPhone 名称）", text: $hotspot.name)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .focused($focusedField, equals: .name)
             }
             inputField(icon: "key.fill", focused: focusedField == .password) {
-                SecureField("个人热点的 Wi-Fi 密码", text: $hotspotPassword)
+                SecureField("个人热点的 Wi-Fi 密码", text: $hotspot.password)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .focused($focusedField, equals: .password)
             }
-            Text("凭据只通过蓝牙发送给选中的 A3；发送后清空密码。加湿器会改连此热点。")
+            Text("凭据通过蓝牙发送给选中的 A3。设备接受后会保存在本机钥匙串，不上传或同步 iCloud；下次自动填入，不会自动重新配网。")
                 .font(Mist.rounded(12, .medium)).foregroundStyle(Mist.tertiary)
             Button {
+                guard session.isRunning, bluetooth.canProvision else { return }
                 Haptics.tap()
                 focusedField = nil
-                bluetooth.provision(ssid: hotspotName, password: hotspotPassword)
-                hotspotPassword = ""
+                bluetooth.provision(ssid: hotspot.name, password: hotspot.password)
             } label: {
                 Label("让 A3 连接这个热点", systemImage: "paperplane.fill")
             }
             .buttonStyle(MistButtonStyle())
-            .disabled(!session.isRunning || !bluetooth.canProvision || hotspotName.isEmpty || hotspotPassword.isEmpty)
+            .disabled(!session.isRunning || !bluetooth.canProvision || hotspot.name.isEmpty || hotspot.password.isEmpty)
+            if !hotspot.storageStatus.isEmpty {
+                Text(hotspot.storageStatus)
+                    .font(Mist.rounded(12, .medium)).foregroundStyle(Mist.secondary)
+            }
+            if hotspot.canRetrySave {
+                Button("重试保存到本机") { hotspot.retrySave() }
+                    .buttonStyle(MistButtonStyle(kind: .secondary))
+            }
+            Button("忘记本机保存的热点", role: .destructive) { confirmingForget = true }
+                .font(Mist.rounded(12, .medium))
+                .disabled(provisioningInFlight)
         }
     }
 
